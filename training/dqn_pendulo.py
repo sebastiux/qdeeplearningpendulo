@@ -5,16 +5,16 @@ Implementación desde cero con NumPy (forward, retropropagación y Adam
 escritos a mano) siguiendo las especificaciones del curso
 "Aprendizaje reforzado - Deep Q-learning" (Universidad Iberoamericana):
 
-  * Estado        s = [θ, θ̇]                       (continuo, R^2)
+  * Estado        s = [x, ẋ, θ, θ̇]                 (continuo, R^4; el carro corre en un riel de ±2.4 m)
   * Acciones      F ∈ {-10.0, -9.5, ..., +9.5, +10.0} N  -> 41 acciones
-  * Recompensa    r = +1 en la vertical (decae con θ² y con el esfuerzo F²), r = -10 si cae
+  * Recompensa    r = +1 en la vertical (decae con θ², x² y el esfuerzo F²), r = -10 si cae o choca
   * Dinámica      ecuaciones no lineales acopladas + integración de Euler (ΔT = 0.02 s)
-  * Red Q         2 -> 64 -> 64 -> 41  (dos capas ocultas, ReLU)
+  * Red Q         4 -> 64 -> 64 -> 41  (dos capas ocultas, ReLU)
   * Optimización  Adam, α = 0.0005, pérdida MSE contra el Target de Bellman
   * Entrenamiento 2000 episodios, máximo 300 pasos por episodio
 
 También entrena la versión "superficial" del Ejercicio 1
-(2 -> 24 -> 3, acciones {-10, 0, +10} N, 500 episodios) para compararlas.
+(4 -> 24 -> 3, acciones {-10, 0, +10} N, 500 episodios) para compararlas.
 
 Uso:
     python training/dqn_pendulo.py            # entrena ambas y exporta a web/data
@@ -48,6 +48,7 @@ class CartPoleConfig:
     g: float = 9.8           # gravedad [m/s^2]
     dt: float = 0.02         # paso de integración ΔT [s]
     theta_fail: float = math.radians(12.0)   # ángulo de caída
+    x_limit: float = 2.4     # el carro choca con el tope del riel en |x| > 2.4 m
     max_steps: int = 300
     reward_alive: float = 1.0
     reward_fall: float = -10.0
@@ -58,8 +59,11 @@ class CartPoleConfig:
     # Costo de esfuerzo −c·(F/F_max)²: premia las fuerzas suaves (control fino).
     reward_effort: float = 0.1
     force_max: float = 10.0
+    # Costo de posición −k·(x/x_lím)²: mantiene el carro cerca del centro del riel.
+    reward_position: float = 0.25
     theta0_range: float = math.radians(10.0) # θ0 ~ U(-10°, 10°) al entrenar
     omega0_range: float = 0.05
+    x0_range: float = 1.0                     # x0 ~ U(-1, 1) m al entrenar
 
 
 class CartPole:
@@ -68,17 +72,17 @@ class CartPole:
         self.rng = rng
         self.reset()
 
-    def reset(self, theta0: float | None = None, omega0: float | None = None):
+    def reset(self, theta0: float | None = None, omega0: float | None = None, x0: float | None = None):
         c = self.cfg
         self.theta = self.rng.uniform(-c.theta0_range, c.theta0_range) if theta0 is None else theta0
         self.omega = self.rng.uniform(-c.omega0_range, c.omega0_range) if omega0 is None else omega0
-        self.x = 0.0
+        self.x = self.rng.uniform(-c.x0_range, c.x0_range) if x0 is None else x0
         self.v = 0.0
         self.t = 0
         return self.state()
 
     def state(self):
-        return np.array([self.theta, self.omega], dtype=np.float64)
+        return np.array([self.x, self.v, self.theta, self.omega], dtype=np.float64)
 
     def step(self, F: float):
         c = self.cfg
@@ -99,13 +103,15 @@ class CartPole:
         self.x = self.x + self.v * c.dt
         self.t += 1
 
-        fell = abs(self.theta) > c.theta_fail
+        # Termina si el péndulo cae o si el carro choca con un extremo del riel
+        fell = abs(self.theta) > c.theta_fail or abs(self.x) > c.x_limit
         truncated = self.t >= c.max_steps
         if fell:
             reward = c.reward_fall
         else:
             reward = (c.reward_alive * (1.0 - c.reward_shaping * (self.theta / c.theta_fail) ** 2)
-                      - c.reward_effort * (F / c.force_max) ** 2)
+                      - c.reward_effort * (F / c.force_max) ** 2
+                      - c.reward_position * (self.x / c.x_limit) ** 2)
         return self.state(), reward, fell, truncated
 
 
@@ -204,16 +210,18 @@ class DQNConfig:
     seed: int = 7
 
 
-# Normalización de la entrada: θ en [-12°, 12°] y θ̇ ~ [-2, 2] rad/s → ~[-1, 1]
-INPUT_SCALE = np.array([1.0 / math.radians(12.0), 0.5])
+# Normalización de la entrada: x en [-2.4, 2.4] m, ẋ ~ [-2, 2] m/s,
+# θ en [-12°, 12°] y θ̇ ~ [-2, 2] rad/s → todas ~[-1, 1]
+STATE_DIM = 4
+INPUT_SCALE = np.array([1.0 / 2.4, 0.5, 1.0 / math.radians(12.0), 0.5])
 
 
 class ReplayBuffer:
     def __init__(self, capacity: int, rng: np.random.Generator):
-        self.s = np.zeros((capacity, 2))
+        self.s = np.zeros((capacity, STATE_DIM))
         self.a = np.zeros(capacity, dtype=np.int64)
         self.r = np.zeros(capacity)
-        self.s2 = np.zeros((capacity, 2))
+        self.s2 = np.zeros((capacity, STATE_DIM))
         self.d = np.zeros(capacity)
         self.cap, self.n, self.i, self.rng = capacity, 0, 0, rng
 
@@ -231,7 +239,7 @@ class DQNAgent:
     def __init__(self, cfg: DQNConfig, rng: np.random.Generator):
         self.cfg = cfg
         self.rng = rng
-        sizes = [2, *cfg.hidden, len(cfg.actions)]
+        sizes = [STATE_DIM, *cfg.hidden, len(cfg.actions)]
         self.q = MLP(sizes, rng)          # red Q en línea  Q(s, a; w)
         self.q_target = MLP(sizes, rng)   # red objetivo    Q(s', a'; w⁻)
         self.q_target.copy_from(self.q)
@@ -266,11 +274,14 @@ class DQNAgent:
 # ---------------------------------------------------------------------------
 # 4. Evaluación y entrenamiento
 # ---------------------------------------------------------------------------
-EVAL_STARTS = [math.radians(d) for d in (-10, -6, -3, 3, 6, 10)]
+# (θ0, x0): ángulos iniciales con el carro centrado y dos arranques cerca de los topes
+EVAL_STARTS = [(math.radians(d), 0.0) for d in (-10, -6, -3, 3, 6, 10)]
+LONG_STARTS = [(math.radians(10), 0.0), (math.radians(-10), 0.0), (math.radians(2), 1.5), (math.radians(-2), -1.5)]
+LONG_STEPS = 1500  # 30 s: verifica que el carro no termine chocando con el riel
 
 
-def rollout(agent: DQNAgent, env: CartPole, theta0: float, steps: int):
-    s = env.reset(theta0=theta0, omega0=0.0)
+def rollout(agent: DQNAgent, env: CartPole, theta0: float, steps: int, x0: float = 0.0):
+    s = env.reset(theta0=theta0, omega0=0.0, x0=x0)
     total, log = 0.0, {"t": [], "theta": [], "omega": [], "force": [], "x": []}
     for _ in range(steps):
         a = agent.act(s, greedy=True)
@@ -287,27 +298,31 @@ def rollout(agent: DQNAgent, env: CartPole, theta0: float, steps: int):
     return total, log
 
 
-def evaluate(agent: DQNAgent, env: CartPole):
-    """Recompensa greedy promedio y error angular medio |θ| (2ª mitad) desde varios θ0."""
+def evaluate(agent: DQNAgent, env: CartPole, long_env: CartPole):
+    """Recompensa greedy promedio, error angular medio |θ| (2ª mitad) y cuántos
+    arranques sobreviven 30 s sin caer ni chocar."""
     scores, errors = [], []
-    for th0 in EVAL_STARTS:
-        total, log = rollout(agent, env, th0, env.cfg.max_steps)
+    for th0, x0 in EVAL_STARTS:
+        total, log = rollout(agent, env, th0, env.cfg.max_steps, x0)
         scores.append(total)
         tail = log["theta"][len(log["theta"]) // 2:]
         survived = len(log["theta"]) == env.cfg.max_steps
         errors.append(float(np.mean(np.abs(tail))) if survived else 12.0)
-    return float(np.mean(scores)), float(np.mean(errors))
+    long_ok = sum(len(rollout(agent, long_env, th0, LONG_STEPS, x0)[1]["t"]) == LONG_STEPS
+                  for th0, x0 in LONG_STARTS)
+    return float(np.mean(scores)), float(np.mean(errors)), long_ok
 
 
 def train(cfg: DQNConfig, phys: CartPoleConfig):
     rng = np.random.default_rng(cfg.seed)
     env = CartPole(phys, rng)
     eval_env = CartPole(phys, np.random.default_rng(0))
+    long_env = CartPole(CartPoleConfig(**{**phys.__dict__, "max_steps": 10**9}), np.random.default_rng(0))
     agent = DQNAgent(cfg, rng)
 
     history = {"episode": [], "reward": [], "avg": [], "steps": [], "epsilon": [], "loss": [], "eval": []}
     window = deque(maxlen=20)
-    best = (-1e9, None, -1, 1e9)
+    best = (-1, -1e9, 1e9, None, -1)  # (long_ok, score, err, red, episodio)
     t0 = time.time()
 
     for ep in range(1, cfg.episodes + 1):
@@ -337,30 +352,30 @@ def train(cfg: DQNConfig, phys: CartPoleConfig):
         history["loss"].append(round(float(np.mean(losses)), 5) if losses else None)
 
         if ep % cfg.eval_every == 0:
-            score, err = evaluate(agent, eval_env)
-            history["eval"].append([ep, round(score, 2), round(err, 3)])
-            # Se conserva el mejor modelo: mayor recompensa y, en empate, menor |θ| medio
-            if (score, -err) >= (best[0], -best[3]):
-                best = (score, agent.q.to_json(), ep, err)
+            score, err, long_ok = evaluate(agent, eval_env, long_env)
+            history["eval"].append([ep, round(score, 2), round(err, 3), long_ok])
+            # Mejor modelo: más arranques que aguantan 30 s, luego mayor recompensa
+            if (long_ok, score) >= (best[0], best[1]):
+                best = (long_ok, score, err, agent.q.to_json(), ep)
             print(f"[{cfg.name}] ep {ep:4d} | avg20 {np.mean(window):7.1f} | eval {score:6.1f} "
-                  f"| |θ| {err:5.2f}° "
+                  f"| |θ| {err:5.2f}° | 30s {long_ok}/{len(LONG_STARTS)} "
                   f"| ε {agent.eps:.3f} | {time.time() - t0:5.0f}s", flush=True)
 
     # Respuesta greedy final desde θ0 = 10° (5 s de simulación, como en las diapositivas)
     best_agent = DQNAgent(cfg, np.random.default_rng(0))
-    best_agent.q.W = [np.array(w) for w in best[1]["W"]]
-    best_agent.q.b = [np.array(b) for b in best[1]["b"]]
-    long_env = CartPole(CartPoleConfig(**{**phys.__dict__, "max_steps": 10_000}), np.random.default_rng(0))
+    best_agent.q.W = [np.array(w) for w in best[3]["W"]]
+    best_agent.q.b = [np.array(b) for b in best[3]["b"]]
     _, response = rollout(best_agent, long_env, math.radians(10.0), 250)
 
     model = {
         "name": cfg.name,
-        "network": best[1],
+        "network": best[3],
         "actions": cfg.actions,
         "input_scale": INPUT_SCALE.tolist(),
-        "best_episode": best[2],
-        "best_eval": best[0],
-        "best_abs_theta": best[3],
+        "best_episode": best[4],
+        "best_eval": best[1],
+        "best_abs_theta": best[2],
+        "best_long_ok": best[0],
         "hyperparameters": {
             "hidden": cfg.hidden, "episodes": cfg.episodes, "lr": cfg.lr, "gamma": cfg.gamma,
             "batch": cfg.batch, "buffer": cfg.buffer, "warmup": cfg.warmup,
@@ -386,6 +401,7 @@ def main():
     p.add_argument("--episodes", type=int, default=None)
     p.add_argument("--seed", type=int, default=None)
     p.add_argument("--effort", type=float, default=None, help="costo de esfuerzo c")
+    p.add_argument("--position", type=float, default=None, help="costo de posición k")
     p.add_argument("--out", type=Path, default=OUT_DIR)
     args = p.parse_args()
 
@@ -394,6 +410,8 @@ def main():
     phys = CartPoleConfig()
     if args.effort is not None:
         phys.reward_effort = args.effort
+    if args.position is not None:
+        phys.reward_position = args.position
     for key, cfg in CONFIGS.items():
         if args.only and key != args.only:
             continue
@@ -405,7 +423,8 @@ def main():
         (out / f"model_{key}.json").write_text(json.dumps(model, separators=(",", ":")))
         (out / f"history_{key}.json").write_text(json.dumps(history, separators=(",", ":")))
         (out / f"response_{key}.json").write_text(json.dumps(response, separators=(",", ":")))
-        print(f"[{key}] mejor modelo: episodio {model['best_episode']} (eval {model['best_eval']:.1f})")
+        print(f"[{key}] mejor modelo: episodio {model['best_episode']} (eval {model['best_eval']:.1f}, "
+              f"30 s {model['best_long_ok']}/{len(LONG_STARTS)})")
 
 
 if __name__ == "__main__":

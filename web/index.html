@@ -37,12 +37,13 @@
       <p class="eyebrow">Aprendizaje reforzado · Deep Q-Learning</p>
       <h1>Una red neuronal profunda que aprende a <span class="grad">equilibrar un péndulo</span></h1>
       <p class="lead">
-        Un agente DQN observa sólo el ángulo $\theta$ y la velocidad angular $\dot\theta$ del péndulo y decide,
-        50 veces por segundo, cuál de <strong>41 fuerzas</strong> aplicar al carro. Nadie le explicó la física:
-        aprendió la política de control por prueba y error en <strong>2,000 episodios</strong>.
+        Un agente DQN observa la posición y la velocidad del carro, el ángulo $\theta$ y la velocidad angular
+        $\dot\theta$ del péndulo, y decide 50 veces por segundo cuál de <strong>41 fuerzas</strong> aplicar para
+        mantenerlo de pie <strong>sin chocar con los topes del riel</strong>. Nadie le explicó la física: aprendió la
+        política por prueba y error en <strong>2,000 episodios</strong>.
       </p>
       <div class="chips">
-        <span class="chip"><b>2 → 64 → 64 → 41</b> neuronas</span>
+        <span class="chip"><b>4 → 64 → 64 → 41</b> neuronas</span>
         <span class="chip"><b>α = 0.0005</b> Adam</span>
         <span class="chip"><b>γ = 0.99</b></span>
         <span class="chip"><b>ΔT = 0.02 s</b> Euler</span>
@@ -57,6 +58,7 @@
       <div class="hero-hud">
         <div><span>θ</span><b id="hero-theta">0.0°</b></div>
         <div><span>F</span><b id="hero-force">0.0 N</b></div>
+        <div><span>x</span><b id="hero-x">0.00 m</b></div>
         <div><span>t</span><b id="hero-time">0.0 s</b></div>
       </div>
       <p class="hero-caption">Red profunda entrenada · recibe empujones aleatorios cada pocos segundos</p>
@@ -71,7 +73,8 @@
         <div class="prose">
           <p>
             <strong>Objetivo:</strong> mantener de pie un péndulo (masa $m$) articulado sobre un carro (masa $M$)
-            aplicando una fuerza horizontal $F$ al carro. El sistema es inestable: sin control, el péndulo cae en
+            aplicando una fuerza horizontal $F$ al carro. El carro corre sobre un <strong>riel finito de ±2.4 m</strong>:
+            si llega a un tope, choca y el episodio termina. El sistema es inestable: sin control, el péndulo cae en
             menos de un segundo.
           </p>
           <p>
@@ -89,11 +92,17 @@
             jugar con el agente.</p>
         </div>
         <figure class="card diagram">
-          <svg viewBox="0 0 360 260" role="img" aria-label="Diagrama del carro con péndulo">
+          <svg viewBox="0 0 360 262" role="img" aria-label="Diagrama del carro con péndulo">
             <defs>
               <linearGradient id="g-cart" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#7c8cff"/><stop offset="1" stop-color="#4a56c9"/></linearGradient>
             </defs>
-            <line x1="10" y1="222" x2="350" y2="222" class="svg-rail"/>
+            <line x1="22" y1="222" x2="338" y2="222" class="svg-rail"/>
+            <rect x="14" y="200" width="8" height="26" rx="2" class="svg-stop"/>
+            <rect x="338" y="200" width="8" height="26" rx="2" class="svg-stop"/>
+            <text x="18" y="246" class="svg-label tiny">−2.4 m</text>
+            <text x="342" y="246" class="svg-label tiny">+2.4 m</text>
+            <line x1="180" y1="232" x2="180" y2="240" class="svg-dash"/>
+            <text x="180" y="254" class="svg-label tiny">x = 0</text>
             <line x1="180" y1="170" x2="180" y2="20" class="svg-dash"/>
             <path d="M180 92 A 78 78 0 0 1 207 97" class="svg-arc"/>
             <text x="198" y="84" class="svg-label">θ</text>
@@ -109,7 +118,7 @@
             <text x="246" y="112" class="svg-label small">2L</text>
             <circle cx="180" cy="160" r="4" class="svg-pivot"/>
           </svg>
-          <figcaption>Estado $\mathbf{s}=[\theta,\ \dot\theta]^T$ · acción: fuerza $F$ sobre el carro</figcaption>
+          <figcaption>Estado $\mathbf{s}=[x,\ \dot x,\ \theta,\ \dot\theta]^T$ · acción: fuerza $F$ sobre el carro</figcaption>
         </figure>
       </div>
     </section>
@@ -143,6 +152,7 @@
                 <tr><td>$g$</td><td>Gravedad</td><td class="num">9.8 m/s²</td></tr>
                 <tr><td>$\Delta T$</td><td>Paso de simulación</td><td class="num">0.02 s</td></tr>
                 <tr><td>$\theta_{\max}$</td><td>Ángulo de caída</td><td class="num">±12°</td></tr>
+                <tr><td>$x_{\max}$</td><td>Topes del riel</td><td class="num">±2.4 m</td></tr>
               </tbody>
             </table>
           </div>
@@ -167,8 +177,11 @@
         <div class="card feature">
           <div class="feature-icon">s</div>
           <h3>Estado</h3>
-          <p>$\mathbf{s}_t=[\theta,\ \dot\theta]^T\in\mathbb{R}^2$, continuo. Antes de entrar a la red se normaliza:
-            $\theta/12^\circ$ y $\dot\theta/2$, para que ambas entradas vivan en $\approx[-1,1]$.</p>
+          <p>$\mathbf{s}_t=[x,\ \dot x,\ \theta,\ \dot\theta]^T\in\mathbb{R}^4$, continuo. Antes de entrar a la red se
+            normaliza: $x/2.4$, $\dot x/2$, $\theta/12^\circ$ y $\dot\theta/2$, para que las cuatro entradas vivan en
+            $\approx[-1,1]$.</p>
+          <p class="muted small">El PDF usa sólo $[\theta,\dot\theta]$. Con un riel finito no alcanza: la red no sabría
+            dónde está el carro. Entrenada así, lo dejaba desplazarse 2.85 m en 10 s, más allá del tope.</p>
         </div>
         <div class="card feature">
           <div class="feature-icon">a</div>
@@ -180,13 +193,14 @@
         <div class="card feature">
           <div class="feature-icon">r</div>
           <h3>Recompensa</h3>
-          <p>$r=+1$ en la vertical y $r=-10$ al caer ($|\theta|>12^\circ$). El +1 decae con la inclinación y con
-            el esfuerzo, para premiar $\theta\approx0$ con fuerzas suaves:</p>
-          <div class="math-block small">$$r_t=\begin{cases}1-\left(\dfrac{\theta_t}{12^\circ}\right)^2-0.1\left(\dfrac{F_t}{10}\right)^2 & |\theta_t|\le 12^\circ\\ -10 & \text{caída}\end{cases}$$</div>
+          <p>$r=+1$ en la vertical y $r=-10$ al caer ($|\theta|>12^\circ$) o chocar ($|x|>2.4$ m). El +1 decae con
+            la inclinación, el esfuerzo y la distancia al centro del riel:</p>
+          <div class="math-block small">$$r_t=1-\left(\tfrac{\theta_t}{12^\circ}\right)^2-0.1\left(\tfrac{F_t}{10}\right)^2-0.25\left(\tfrac{x_t}{2.4}\right)^2$$</div>
+          <p class="muted small">y $r_t=-10$ si cae o choca.</p>
         </div>
       </div>
       <div class="callout">
-        <b>¿Por qué estos dos términos?</b> Los agregamos después de entrenar con la recompensa literal:
+        <b>¿Por qué estos términos?</b> Los agregamos después de entrenar con la recompensa literal:
         <ul class="callout-list">
           <li><b>Con $+1$ binario</b> el agente encontró un "truco": sobrevivir los 300 pasos <em>inclinado ~11°</em>,
             acelerando el carro sin parar (inclinado y acelerando, el péndulo también está en equilibrio). Cumple la
@@ -194,12 +208,15 @@
           <li><b>Sin costo de esfuerzo</b> la red profunda centraba el péndulo, pero alternaba entre $+9.5$ y $-5.5$ N
             en cada paso (como en la diapositiva 28) y la red superficial lograba lo mismo. Nada premiaba usar las 41
             acciones. Con $-0.1\,(F/10)^2$ las fuerzas suaves valen más y la granularidad se vuelve útil.</li>
+          <li><b>Sin costo de posición</b> el carro sólo tiene que no chocar, y a menudo termina cerca de un tope, donde
+            cualquier empujón lo saca. Con $-0.25\,(x/2.4)^2$ la red aprende a regresarlo al centro.</li>
         </ul>
         La recompensa máxima sigue siendo $+1$ por paso, o sea 300 por episodio, como en las curvas del curso.
       </div>
       <p class="prose">
-        Un episodio termina cuando el péndulo cae o al llegar a <strong>300 pasos</strong> (6 s). El ángulo inicial es
-        aleatorio, $\theta_0\sim\mathcal U(-10^\circ,10^\circ)$, y $\dot\theta_0\sim\mathcal U(-0.05,0.05)$ rad/s.
+        Un episodio termina cuando el péndulo cae, cuando el carro choca o al llegar a <strong>300 pasos</strong> (6 s).
+        El arranque es aleatorio: $\theta_0\sim\mathcal U(-10^\circ,10^\circ)$, $\dot\theta_0\sim\mathcal U(-0.05,0.05)$
+        rad/s y $x_0\sim\mathcal U(-1,1)$ m, para que aprenda a volver al centro desde cualquier lado.
       </p>
     </section>
 
@@ -210,10 +227,12 @@
         <div class="prose">
           <p>
             Q-Learning clásico guarda $Q(s,a)$ en una matriz de tamaño $|\mathbb S|\times|\mathbb A|$. Con estados
-            continuos habría que discretizar: con 1° de precisión en $\theta$ (360 valores), 100 valores de
-            $\dot\theta$ y 41 acciones:
+            continuos habría que discretizar. Sólo para el péndulo, con 1° de precisión en $\theta$ (360 valores),
+            100 valores de $\dot\theta$ y 41 acciones:
           </p>
           <div class="math-block">$$360\times100\times41 = 1{,}476{,}000\ \text{celdas}$$</div>
+          <p>Al sumar el carro (48 posiciones de 10 cm y 40 velocidades) se vuelven
+            $1{,}476{,}000\times48\times40\approx 2{,}834$ millones de celdas.</p>
           <p>
             Y casi ninguna se visitaría. Si se aumenta la precisión a 0.1°, el número de celdas se multiplica por
             10. Además, la tabla no generaliza: aprender $Q$ en $\theta=1^\circ$ no dice nada sobre
@@ -223,13 +242,13 @@
         <div class="card compare">
           <div class="compare-col">
             <h3>Tabla Q</h3>
-            <p class="big num">1,476,000</p>
+            <p class="big num">2.8 × 10⁹</p>
             <p class="muted">celdas independientes, sin generalización</p>
           </div>
           <div class="compare-vs">vs</div>
           <div class="compare-col accent">
             <h3>Red Q</h3>
-            <p class="big num" id="param-count">7,017</p>
+            <p class="big num" id="param-count">7,145</p>
             <p class="muted">pesos que generalizan a estados nunca vistos: $Q(s,a)\approx Q(s,a;\mathbf w)$</p>
           </div>
         </div>
@@ -248,7 +267,7 @@
           <table class="table">
             <thead><tr><th>Capa</th><th>Tamaño</th><th>Función</th></tr></thead>
             <tbody>
-              <tr><td>Entrada</td><td class="num">2</td><td>$\theta,\ \dot\theta$ normalizados</td></tr>
+              <tr><td>Entrada</td><td class="num">4</td><td>$x,\ \dot x,\ \theta,\ \dot\theta$ normalizados</td></tr>
               <tr><td>Oculta 1</td><td class="num">64 · ReLU</td><td>Generaliza entre estados</td></tr>
               <tr><td>Oculta 2</td><td class="num">64 · ReLU</td><td>Capacidad para el control fino</td></tr>
               <tr><td>Salida</td><td class="num">41 · lineal</td><td>$Q(s,a_1),\dots,Q(s,a_{41})$</td></tr>
@@ -257,13 +276,13 @@
           <div class="math-block small">$$\mathbf h_1=\mathrm{ReLU}(\mathbf s W_1+\mathbf b_1),\quad \mathbf h_2=\mathrm{ReLU}(\mathbf h_1W_2+\mathbf b_2),\quad Q=\mathbf h_2W_3+\mathbf b_3$$</div>
           <p class="muted small">
             Pesos iniciales con inicialización He ($\mathcal N(0,\,2/n_{in})$). En total
-            $2\cdot64+64 + 64\cdot64+64 + 64\cdot41+41 = 7{,}017$ parámetros.
+            $4\cdot64+64 + 64\cdot64+64 + 64\cdot41+41 = 7{,}145$ parámetros.
           </p>
         </div>
         <div class="card">
           <div class="card-row"><h3>Activaciones en vivo</h3><span class="muted small">el diagrama sigue al agente de la demo</span></div>
           <canvas id="net-canvas" class="net-canvas"></canvas>
-          <p class="muted small legend-line"><span class="sw pos"></span> peso positivo <span class="sw neg"></span> peso negativo <span class="sw acc"></span> acción elegida</p>
+          <p class="muted small legend-line"><span class="sw pos"></span> favorece la acción elegida <span class="sw neg"></span> la frena <span class="sw acc"></span> acción elegida</p>
         </div>
       </div>
     </section>
@@ -335,7 +354,7 @@
         <table class="table">
           <thead><tr><th>Parámetro</th><th class="num">Ejercicio 1 · superficial</th><th class="num">Ejercicio 2 · profunda</th></tr></thead>
           <tbody>
-            <tr><td>Arquitectura</td><td class="num">2 → 24 → 3</td><td class="num">2 → 64 → 64 → 41</td></tr>
+            <tr><td>Arquitectura</td><td class="num">4 → 24 → 3</td><td class="num">4 → 64 → 64 → 41</td></tr>
             <tr><td>Acciones</td><td class="num">{−10, 0, +10} N</td><td class="num">−10 … +10 N (paso 0.5)</td></tr>
             <tr><td>Tasa de aprendizaje α</td><td class="num">0.001</td><td class="num">0.0005</td></tr>
             <tr><td>Episodios</td><td class="num">500</td><td class="num">2,000</td></tr>
@@ -343,7 +362,7 @@
             <tr><td>Decaimiento de ε por episodio</td><td class="num">0.99</td><td class="num">0.996</td></tr>
             <tr><td>Minilote · memoria</td><td class="num">64 · 50,000</td><td class="num">64 · 50,000</td></tr>
             <tr><td>Sincronizar red objetivo</td><td class="num">cada 500 pasos</td><td class="num">cada 500 pasos</td></tr>
-            <tr><td>Recompensa por paso</td><td class="num">1 − (θ/12°)² − 0.1·(F/10)²</td><td class="num">1 − (θ/12°)² − 0.1·(F/10)²</td></tr>
+            <tr><td>Recompensa por paso</td><td class="num" colspan="2">1 − (θ/12°)² − 0.1·(F/10)² − 0.25·(x/2.4)²</td></tr>
             <tr><td>Pasos máximos por episodio</td><td class="num">300</td><td class="num">300</td></tr>
           </tbody>
         </table>
@@ -398,8 +417,9 @@
           <div class="table-wrap">
             <table class="table" id="diag-table"></table>
           </div>
-          <p class="muted small">Medido sobre la respuesta greedy de 5 s desde θ₀ = 10°; "régimen" son los últimos 3 s.
-            Ambas redes equilibran el péndulo: la diferencia está en la <b>precisión</b> y en cómo usan la fuerza.</p>
+          <p class="muted small">Medido sobre la respuesta greedy de 5 s desde θ₀ = 10° y x₀ = 0; "régimen" son los últimos 3 s.
+            Ambas redes equilibran el péndulo: la diferencia está en la <b>precisión</b>, en cómo usan la fuerza y en qué
+            tan bien regresan el carro al centro.</p>
         </div>
         <div class="card">
           <h3>Mapa de la política aprendida</h3>
@@ -407,7 +427,9 @@
             <canvas id="policy-canvas" class="policy-canvas"></canvas>
             <div class="policy-legend"><span>−10 N</span><i></i><span>+10 N</span></div>
           </div>
-          <p class="muted small">Fuerza elegida para cada $(\theta,\dot\theta)$. La frontera diagonal es la "ley de control" que descubrió la red.</p>
+          <p class="muted small">Fuerza elegida para cada $(\theta,\dot\theta)$ con el carro quieto en el centro
+            ($x=0,\ \dot x=0$). La frontera diagonal es la "ley de control" que descubrió la red; en la demo este
+            mapa se recalcula en vivo para la posición real del carro.</p>
         </div>
       </div>
     </section>
@@ -418,7 +440,7 @@
       <div class="demo">
         <div class="card demo-main">
           <canvas id="demo-canvas" class="demo-canvas"></canvas>
-          <div class="overlay" id="demo-overlay" hidden><b>¡Cayó!</b><span>reiniciando…</span></div>
+          <div class="overlay" id="demo-overlay" hidden><b id="overlay-title">¡Cayó!</b><span>reiniciando…</span></div>
           <div class="demo-hud">
             <div><span>θ</span><b id="d-theta">0.0°</b></div>
             <div><span>θ̇</span><b id="d-omega">0.00</b></div>
@@ -444,6 +466,10 @@
             <input type="range" id="theta0" min="-11" max="11" step="0.5" value="10" />
           </label>
           <label class="field">
+            <span>Posición inicial del carro <b id="x0-val">0.0 m</b></span>
+            <input type="range" id="x0" min="-2" max="2" step="0.1" value="0" />
+          </label>
+          <label class="field">
             <span>Velocidad <b id="speed-val">1×</b></span>
             <input type="range" id="speed" min="0.25" max="3" step="0.25" value="1" />
           </label>
@@ -459,9 +485,51 @@
           <p class="muted small">Tip: también puedes hacer clic sobre la simulación para empujar el péndulo hacia ese lado.</p>
         </aside>
       </div>
+      <h3 class="brain-title">¿Cómo decide la red? <span class="muted small">en tiempo real, 50 decisiones por segundo</span></h3>
+      <div class="card decision-banner">
+        <div class="decision-force">
+          <span class="muted small">Decisión</span>
+          <b id="dec-force">0.0 N</b>
+          <span id="dec-dir" class="small">—</span>
+        </div>
+        <p id="dec-text" class="decision-text">—</p>
+        <div class="decision-meta">
+          <div><span class="muted small">Q de la elegida</span><b id="dec-q">—</b></div>
+          <div><span class="muted small">ventaja sobre F = 0</span><b id="dec-adv">—</b></div>
+          <div><span class="muted small">margen sobre la 2.ª mejor</span><b id="dec-margin">—</b></div>
+        </div>
+      </div>
+      <div class="brain">
+        <div class="card">
+          <p class="chart-title">1 · Valor esperado de cada fuerza: Q(s, a)</p>
+          <canvas id="q-canvas" class="q-canvas"></canvas>
+          <p class="muted small">Cada barra es la recompensa futura que la red espera si aplica esa fuerza ahora.
+            Elige la más alta (en blanco); el contorno punteado es no empujar (F = 0).</p>
+        </div>
+        <div class="card">
+          <p class="chart-title">2 · ¿Qué variable pesa en la decisión?</p>
+          <canvas id="attr-canvas" class="attr-canvas"></canvas>
+          <p class="muted small">Aporte de cada entrada a la preferencia por empujar hacia la
+            <span class="pos-txt">derecha (turquesa)</span> o hacia la <span class="neg-txt">izquierda (rojo)</span>,
+            con los mismos colores de la escala de fuerzas. Se calcula con gradientes integrados desde el equilibrio
+            ($x=\dot x=\theta=\dot\theta=0$).</p>
+        </div>
+        <div class="card">
+          <p class="chart-title">3 · Mapa de decisión en el estado actual</p>
+          <canvas id="live-map" class="live-map"></canvas>
+          <div class="policy-legend"><span>−10 N</span><i></i><span>+10 N</span></div>
+          <p class="muted small">Qué fuerza elegiría la red para cada (θ, θ̇) con el carro donde está ahora. El punto
+            blanco es el estado real y su estela, el camino reciente.</p>
+        </div>
+      </div>
+      <div class="card brain-net">
+        <div class="card-row"><p class="chart-title">4 · Camino de la decisión dentro de la red</p>
+          <span class="muted small legend-line"><span class="sw pos"></span> favorece la acción elegida <span class="sw neg"></span> la frena · grosor = |activación × peso|</span></div>
+        <canvas id="demo-net" class="demo-net"></canvas>
+      </div>
       <div class="grid-3 demo-panels">
-        <div class="card"><p class="chart-title">Valores Q(s, a) en este instante</p><canvas id="q-canvas" class="mini"></canvas></div>
         <div class="card"><p class="chart-title">θ(t) · últimos 6 s</p><canvas id="theta-trace" class="mini"></canvas></div>
+        <div class="card"><p class="chart-title">x(t) del carro · topes ±2.4 m</p><canvas id="x-trace" class="mini"></canvas></div>
         <div class="card"><p class="chart-title">F(t) · últimos 6 s</p><canvas id="force-trace" class="mini"></canvas></div>
       </div>
     </section>
@@ -471,15 +539,17 @@
       <div class="step-head"><span class="step-num">10</span><h2>Entrena tu propia red en el navegador</h2></div>
       <p class="prose">
         Mismo algoritmo, reescrito en JavaScript y ejecutado en un Web Worker: la red se entrena en tu
-        computadora sin bloquear la página. Cada 10 episodios el agente de la derecha se actualiza con los pesos
-        actuales, así que puedes ver cómo aprende.
+        computadora sin bloquear la página. Cada 25 episodios se evalúa la política greedy y, como en Python, se
+        conserva <strong>el mejor modelo encontrado</strong> (no el del último episodio, que puede estar en una mala
+        racha). El agente de la derecha usa siempre ese mejor modelo. Para ir más rápido, la red se actualiza cada
+        2 pasos del simulador; con 600 episodios tarda de 2 a 4 minutos según tu computadora.
       </p>
       <div class="train">
         <div class="card train-controls">
           <label class="field"><span>Red</span>
             <select id="t-arch">
-              <option value="deep">Profunda 2 → 64 → 64 → 41</option>
-              <option value="shallow">Superficial 2 → 24 → 3</option>
+              <option value="deep">Profunda 4 → 64 → 64 → 41</option>
+              <option value="shallow">Superficial 4 → 24 → 3</option>
             </select>
           </label>
           <label class="field"><span>Episodios <b id="t-ep-val">600</b></span>
@@ -501,6 +571,7 @@
           <button class="btn small ghost wide" id="t-use" disabled>Usar en la demo</button>
           <div class="progress"><i id="t-bar"></i></div>
           <p class="muted small" id="t-status">Listo para entrenar.</p>
+          <p class="small" id="t-best"></p>
         </div>
         <div class="card train-chart">
           <div class="chart-box tall"><canvas id="chart-live"></canvas></div>

@@ -13,42 +13,54 @@ o cambiar de controlador) y un modo para **entrenar tu propia red en el navegado
 
 | Elemento | Especificación |
 | --- | --- |
-| Estado | $s = [\theta,\ \dot\theta]$ (continuo) |
+| Estado | $s = [x,\ \dot x,\ \theta,\ \dot\theta]$ (continuo) |
 | Acciones | 41 fuerzas: $F \in \{-10, -9.5, \dots, +10\}$ N |
-| Recompensa | $+1$ en la vertical, $-10$ al caer ($\lvert\theta\rvert > 12^\circ$) |
+| Recompensa | $+1$ en la vertical, $-10$ al caer ($\lvert\theta\rvert > 12^\circ$) o al chocar con un tope ($\lvert x\rvert > 2.4$ m) |
 | Dinámica | Ecuaciones no lineales acopladas de $\ddot\theta$ y $\ddot x$, integración de Euler con $\Delta T = 0.02$ s |
-| Red Q | $2 \to 64 \to 64 \to 41$ (dos capas ocultas ReLU, salida lineal) |
+| Riel | Finito, con topes en $\pm 2.4$ m |
+| Red Q | $4 \to 64 \to 64 \to 41$ (dos capas ocultas ReLU, salida lineal) |
 | Entrenamiento | Adam con $\alpha = 0.0005$, $\gamma = 0.99$, 2,000 episodios de hasta 300 pasos |
 
 Parámetros físicos: $M = 1$ kg, $m = 0.1$ kg, $L = 0.5$ m, $g = 9.8$ m/s².
 
+### Sobre el estado
+
+El PDF usa $s = [\theta,\ \dot\theta]$. Con un riel finito eso no alcanza: la red no sabe dónde está el carro.
+Entrenada así, lo dejaba desplazarse 2.85 m en 10 s, más allá del tope. Por eso el estado incluye la posición
+$x$ y la velocidad $\dot x$ del carro.
+
 ### Sobre la recompensa
 
-El $+1$ binario del enunciado no distingue $0^\circ$ de $11^\circ$. Al entrenar con él, el agente aprendió a
-sobrevivir los 300 pasos **inclinado ~11°**, acelerando el carro sin parar. Para que "vertical" signifique
-$\theta \approx 0$ y que las 41 acciones sirvan para el control fino, la recompensa por paso es
+$$r_t = 1 - \left(\tfrac{\theta_t}{12^\circ}\right)^2 - 0.1\left(\tfrac{F_t}{10\,\text{N}}\right)^2 - 0.25\left(\tfrac{x_t}{2.4\,\text{m}}\right)^2, \qquad r = -10 \text{ al caer o chocar}$$
 
-$$r_t = 1 - \left(\tfrac{\theta_t}{12^\circ}\right)^2 - c\left(\tfrac{F_t}{10\,\text{N}}\right)^2, \qquad r = -10 \text{ al caer}$$
+El máximo sigue siendo $+1$ por paso, o sea 300 por episodio. Cada término corrige algo que pasó al entrenar con la
+recompensa literal:
 
-con $c = 0.1$. El máximo sigue siendo $+1$ por paso, o sea 300 por episodio. Sin el costo de esfuerzo la red
-profunda alternaba entre $+9.5$ y $-5.5$ N en cada paso y la superficial rendía igual. Con él, las 41 acciones
-sirven para el control fino.
+- **$\theta^2$:** con el $+1$ binario el agente sobrevivía **inclinado ~11°**, acelerando el carro sin parar.
+- **$F^2$:** sin costo de esfuerzo, la red profunda alternaba entre $+9.5$ y $-5.5$ N en cada paso y la
+  superficial rendía igual.
+- **$x^2$:** sin costo de posición, el carro solía quedar cerca de un tope.
 
 ## Resultados
 
-Respuesta greedy desde $\theta_0 = 10^\circ$; "régimen" son los últimos 3 s de una simulación de 5 s.
+Respuesta greedy desde $\theta_0 = 10^\circ$ y $x_0 = 0$; "régimen" son los últimos 3 s de una simulación de 5 s.
 
-| Métrica | Superficial (2→24→3) | Profunda (2→64→64→41) |
+| Métrica | Superficial (4→24→3) | Profunda (4→64→64→41) |
 | --- | ---: | ---: |
-| Error RMS de θ en régimen | 0.65° | **0.26°** |
-| \|θ\| máximo en régimen | 1.30° | **0.61°** |
-| Fuerza media \|F\| | 0.47 N | **0.36 N** |
-| Niveles de fuerza usados | 3 | 5 |
-| Episodios hasta promedio ≥ 250 | **100** | 341 |
-| Mejor evaluación greedy | 296.4 | **297.7** |
+| Error RMS de θ en régimen | 1.01° | **0.28°** |
+| \|θ\| máximo en régimen | 1.99° | **0.73°** |
+| \|x\| del carro al final | 0.40 m | **0.02 m** |
+| Fuerza media \|F\| | 0.33 N | **0.25 N** |
+| Niveles de fuerza usados | 3 | 6 |
+| Episodios hasta promedio ≥ 250 | **112** | 414 |
+| Mejor evaluación greedy | 294.7 | **297.0** |
+
+Con 135 arranques difíciles ($\theta_0$ de −10° a 10°, $\dot\theta_0$ de −1 a 1 rad/s y $x_0 \in \{-1.5, 0, 1.5\}$ m,
+30 s cada uno), la profunda se recupera en el 92.6 % de los casos y la superficial en el 89.6 %.
 
 Ambas redes equilibran el péndulo. La superficial converge antes porque explora 3 acciones en lugar de 41, pero sólo
-puede corregir con golpes de ±10 N. La profunda modula la fuerza y es unas 2.5 veces más precisa.
+puede corregir con golpes de ±10 N. La profunda modula la fuerza, es unas 3.6 veces más precisa y regresa el carro
+al centro del riel.
 
 ## Estructura
 
@@ -70,7 +82,7 @@ tests/smoke.mjs           Verifica que el modelo exportado equilibra el péndulo
 
 ```bash
 pip install -r training/requirements.txt
-python training/dqn_pendulo.py          # entrena la red profunda y la superficial (~6 min), exporta a web/data
+python training/dqn_pendulo.py          # entrena la red profunda y la superficial (~5 min), exporta a web/data
 npm test                                # prueba de humo
 npm run serve                           # http://localhost:8000
 ```

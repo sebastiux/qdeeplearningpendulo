@@ -8,12 +8,11 @@ let total = 0;
 
 self.onmessage = ({ data }) => {
   if (data.type === 'start') {
-    const { episodes, lr, hidden, seed, shallow } = data.config;
+    const { episodes, lr, hidden, seed, shallow, trainEvery } = data.config;
     const actions = shallow ? [-10, 0, 10] : DEEP_ACTIONS;
-    trainer = new DQNTrainer(
-      { lr, hidden, actions, epsDecay: shallow ? 0.99 : 0.996 },
-      seededRandom(seed),
-    );
+    // ε llega a 0.01 al 60 % de los episodios (con 2000 episodios ≈ 0.996, como en Python)
+    const epsDecay = 0.01 ** (1 / (0.6 * episodes));
+    trainer = new DQNTrainer({ lr, hidden, actions, epsDecay, episodes, trainEvery }, seededRandom(seed));
     total = episodes;
     running = true;
     loop();
@@ -22,30 +21,32 @@ self.onmessage = ({ data }) => {
   } else if (data.type === 'resume' && trainer) {
     running = true;
     loop();
-  } else if (data.type === 'stop') {
-    running = false;
-    trainer = null;
   }
 };
 
-function snapshot() {
-  return {
-    name: 'navegador',
-    network: trainer.q.toJSON(),
-    actions: trainer.cfg.actions,
-    input_scale: INPUT_SCALE,
-  };
-}
+const pack = (net, extra = {}) => ({ name: 'navegador', network: net.toJSON(), actions: trainer.cfg.actions, input_scale: INPUT_SCALE, ...extra });
 
 function loop() {
   if (!running || !trainer) return;
   const batch = [];
+  let improved = false;
   const t0 = performance.now();
-  // Trabajar en bloques de ~40 ms para poder recibir mensajes (pausa/stop)
-  while (performance.now() - t0 < 40 && trainer.episode < total) batch.push(trainer.runEpisode());
+  // Bloques de ~50 ms para poder recibir mensajes (pausa)
+  while (performance.now() - t0 < 50 && trainer.episode < total) {
+    const ep = trainer.runEpisode();
+    improved ||= !!ep.improved;
+    batch.push(ep);
+  }
   const done = trainer.episode >= total;
-  const withModel = done || trainer.episode % 10 < batch.length;
-  self.postMessage({ type: 'progress', batch, steps: trainer.steps, model: withModel ? snapshot() : null, done });
+  const b = trainer.best;
+  self.postMessage({
+    type: 'progress',
+    batch,
+    steps: trainer.steps,
+    done,
+    // El mejor modelo encontrado hasta ahora (no el último, que puede estar en una mala racha)
+    best: improved || done ? pack(b.net, { best_episode: b.episode, best_eval: b.score, best_long_ok: b.longOk, long_total: b.longTotal }) : null,
+  });
   if (done) running = false;
   else setTimeout(loop, 0);
 }

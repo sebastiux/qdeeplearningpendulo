@@ -84,6 +84,24 @@ export class MLP {
     return { q: acts[acts.length - 1], acts };
   }
 
+  // Gradiente de (gOut · salida) respecto a la entrada x, para un solo estado
+  inputGrad(x, gOut) {
+    const acts = this.forwardBatch(Float64Array.from(x), 1);
+    let delta = Float64Array.from(gOut);
+    for (let l = this.W.length - 1; l >= 0; l--) {
+      const nIn = this.sizes[l], nOut = this.sizes[l + 1], W = this.W[l], A = acts[l];
+      const prev = new Float64Array(nIn);
+      for (let i = 0; i < nIn; i++) {
+        if (l > 0 && A[i] <= 0) continue; // derivada de ReLU (la entrada no tiene activación)
+        let s = 0;
+        for (let j = 0; j < nOut; j++) s += W[i * nOut + j] * delta[j];
+        prev[i] = s;
+      }
+      delta = prev;
+    }
+    return delta;
+  }
+
   // Retropropagación: grad = dL/d(salida) (n × nOut). Devuelve gradientes por capa.
   backward(acts, grad, n) {
     const L = this.W.length;

@@ -1,5 +1,6 @@
-// Péndulo invertido sobre un carro: misma dinámica e integración de Euler
-// que training/dqn_pendulo.py, para que los pesos exportados funcionen igual.
+// Péndulo invertido sobre un carro que corre en un riel finito: misma dinámica
+// e integración de Euler que training/dqn_pendulo.py, para que los pesos
+// exportados funcionen igual.
 
 export const DEG = Math.PI / 180;
 
@@ -10,14 +11,17 @@ export const PHYSICS = {
   g: 9.8,               // gravedad [m/s²]
   dt: 0.02,             // ΔT [s]
   thetaFail: 12 * DEG,  // ángulo de caída
+  xLimit: 2.4,          // topes del riel en ±2.4 m
   maxSteps: 300,
   rewardAlive: 1,
   rewardFall: -10,
   rewardShaping: 1,     // r = 1 − k·(θ/θ_caída)² mientras sigue de pie
   rewardEffort: 0.1,    // costo de esfuerzo −c·(F/F_max)²
   forceMax: 10,
+  rewardPosition: 0.25, // costo de posición −k·(x/x_lím)²
   theta0Range: 10 * DEG,
   omega0Range: 0.05,
+  x0Range: 1.0,
 };
 
 export class CartPole {
@@ -27,20 +31,22 @@ export class CartPole {
     this.reset();
   }
 
-  reset(theta0 = null, omega0 = null) {
+  reset(theta0 = null, omega0 = null, x0 = null) {
     const c = this.cfg;
     this.theta = theta0 ?? (this.rng() * 2 - 1) * c.theta0Range;
     this.omega = omega0 ?? (this.rng() * 2 - 1) * c.omega0Range;
-    this.x = 0;
+    this.x = x0 ?? (this.rng() * 2 - 1) * c.x0Range;
     this.v = 0;
     this.t = 0;
     this.lastForce = 0;
     this.thetaAcc = 0;
+    this.crashed = false;
     return this.state();
   }
 
+  // s = [x, ẋ, θ, θ̇]
   state() {
-    return [this.theta, this.omega];
+    return [this.x, this.v, this.theta, this.omega];
   }
 
   step(F) {
@@ -64,11 +70,15 @@ export class CartPole {
     this.lastForce = F;
     this.thetaAcc = thetaAcc;
 
-    const fell = Math.abs(this.theta) > c.thetaFail;
+    // Termina si el péndulo cae o si el carro choca con un tope del riel
+    this.crashed = Math.abs(this.x) > c.xLimit;
+    const fell = Math.abs(this.theta) > c.thetaFail || this.crashed;
     const truncated = this.t >= c.maxSteps;
     const reward = fell
       ? c.rewardFall
-      : c.rewardAlive * (1 - c.rewardShaping * (this.theta / c.thetaFail) ** 2) - c.rewardEffort * (F / c.forceMax) ** 2;
+      : c.rewardAlive * (1 - c.rewardShaping * (this.theta / c.thetaFail) ** 2)
+        - c.rewardEffort * (F / c.forceMax) ** 2
+        - c.rewardPosition * (this.x / c.xLimit) ** 2;
     return { state: this.state(), reward, fell, truncated };
   }
 }
