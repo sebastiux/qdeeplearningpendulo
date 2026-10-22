@@ -1,0 +1,537 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Péndulo invertido · Deep Q-Learning</title>
+  <meta name="description" content="Red neuronal profunda entrenada con Deep Q-Learning (DQN) para mantener estable un péndulo invertido sobre un carro. Explicación paso a paso, gráficas y demostración interactiva." />
+  <meta name="theme-color" content="#0b1020" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230b1020'/%3E%3Cline x1='32' y1='42' x2='38' y2='12' stroke='%232ee6c5' stroke-width='5' stroke-linecap='round'/%3E%3Ccircle cx='38' cy='12' r='6' fill='%232ee6c5'/%3E%3Crect x='16' y='40' width='32' height='12' rx='4' fill='%237c8cff'/%3E%3C/svg%3E" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="vendor/katex/katex.min.css" />
+  <link rel="stylesheet" href="css/styles.css" />
+  <script defer src="vendor/katex/katex.min.js"></script>
+  <script defer src="vendor/katex/contrib/auto-render.min.js"></script>
+  <script defer src="vendor/chart.umd.min.js"></script>
+  <script type="module" src="js/main.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#inicio"><span class="brand-dot"></span> DQN · Péndulo</a>
+    <nav>
+      <a href="#problema">Problema</a>
+      <a href="#fisica">Física</a>
+      <a href="#red">Red Q</a>
+      <a href="#algoritmo">Algoritmo</a>
+      <a href="#resultados">Resultados</a>
+      <a href="#demo">Demo</a>
+      <a href="#entrena">Entrena</a>
+    </nav>
+  </header>
+
+  <!-- ===================== HERO ===================== -->
+  <section id="inicio" class="hero">
+    <div class="hero-text">
+      <p class="eyebrow">Aprendizaje reforzado · Deep Q-Learning</p>
+      <h1>Una red neuronal profunda que aprende a <span class="grad">equilibrar un péndulo</span></h1>
+      <p class="lead">
+        Un agente DQN observa sólo el ángulo $\theta$ y la velocidad angular $\dot\theta$ del péndulo y decide,
+        50 veces por segundo, cuál de <strong>41 fuerzas</strong> aplicar al carro. Nadie le explicó la física:
+        aprendió la política de control por prueba y error en <strong>2,000 episodios</strong>.
+      </p>
+      <div class="chips">
+        <span class="chip"><b>2 → 64 → 64 → 41</b> neuronas</span>
+        <span class="chip"><b>α = 0.0005</b> Adam</span>
+        <span class="chip"><b>γ = 0.99</b></span>
+        <span class="chip"><b>ΔT = 0.02 s</b> Euler</span>
+      </div>
+      <div class="cta">
+        <a class="btn primary" href="#demo">Probar la demo</a>
+        <a class="btn ghost" href="#problema">Ver la solución paso a paso</a>
+      </div>
+    </div>
+    <div class="hero-sim card glass">
+      <canvas id="hero-canvas" aria-label="Simulación del péndulo controlado por la red"></canvas>
+      <div class="hero-hud">
+        <div><span>θ</span><b id="hero-theta">0.0°</b></div>
+        <div><span>F</span><b id="hero-force">0.0 N</b></div>
+        <div><span>t</span><b id="hero-time">0.0 s</b></div>
+      </div>
+      <p class="hero-caption">Red profunda entrenada · recibe empujones aleatorios cada pocos segundos</p>
+    </div>
+  </section>
+
+  <main>
+    <!-- ===================== PASO 1 ===================== -->
+    <section id="problema" class="step">
+      <div class="step-head"><span class="step-num">01</span><h2>El problema</h2></div>
+      <div class="grid-2">
+        <div class="prose">
+          <p>
+            <strong>Objetivo:</strong> mantener de pie un péndulo (masa $m$) articulado sobre un carro (masa $M$)
+            aplicando una fuerza horizontal $F$ al carro. El sistema es inestable: sin control, el péndulo cae en
+            menos de un segundo.
+          </p>
+          <p>
+            El enunciado plantea dos ejercicios. En el <strong>Ejercicio 1</strong> una red <em>superficial</em>
+            (una capa oculta de 24 neuronas, 3 acciones $\{-10, 0, +10\}$ N) sólo puede aplicar golpes de fuerza
+            máxima (control <em>bang-bang</em>), y en las diapositivas no logra el control fino. El
+            <strong>Ejercicio 2</strong> pide resolverlo con un <strong>DQN profundo</strong>:
+          </p>
+          <ul class="checks">
+            <li><b>Más capacidad:</b> dos capas ocultas en lugar de una.</li>
+            <li><b>Más granularidad:</b> 41 acciones de $-10$ N a $+10$ N en pasos de $0.5$ N.</li>
+            <li><b>Ajuste fino:</b> tasa de aprendizaje $\alpha = 0.0005$ y 2,000 episodios.</li>
+          </ul>
+          <p>Esta página entrena ambas redes, compara sus resultados con los datos reales del entrenamiento y deja
+            jugar con el agente.</p>
+        </div>
+        <figure class="card diagram">
+          <svg viewBox="0 0 360 260" role="img" aria-label="Diagrama del carro con péndulo">
+            <defs>
+              <linearGradient id="g-cart" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#7c8cff"/><stop offset="1" stop-color="#4a56c9"/></linearGradient>
+            </defs>
+            <line x1="10" y1="222" x2="350" y2="222" class="svg-rail"/>
+            <line x1="180" y1="170" x2="180" y2="20" class="svg-dash"/>
+            <path d="M180 92 A 78 78 0 0 1 207 97" class="svg-arc"/>
+            <text x="198" y="84" class="svg-label">θ</text>
+            <line x1="180" y1="170" x2="226" y2="34" class="svg-pole"/>
+            <circle cx="226" cy="34" r="13" class="svg-bob"/>
+            <text x="226" y="39" class="svg-in">m</text>
+            <rect x="130" y="160" width="100" height="44" rx="9" fill="url(#g-cart)"/>
+            <text x="180" y="188" class="svg-in">M</text>
+            <circle cx="152" cy="212" r="10" class="svg-wheel"/><circle cx="208" cy="212" r="10" class="svg-wheel"/>
+            <line x1="62" y1="182" x2="122" y2="182" class="svg-force"/>
+            <path d="M126 182 l-12 -7 v14 z" class="svg-force-head"/>
+            <text x="78" y="172" class="svg-label">F</text>
+            <text x="246" y="112" class="svg-label small">2L</text>
+            <circle cx="180" cy="160" r="4" class="svg-pivot"/>
+          </svg>
+          <figcaption>Estado $\mathbf{s}=[\theta,\ \dot\theta]^T$ · acción: fuerza $F$ sobre el carro</figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <!-- ===================== PASO 2 ===================== -->
+    <section id="fisica" class="step">
+      <div class="step-head"><span class="step-num">02</span><h2>Modelo físico: el ambiente</h2></div>
+      <div class="grid-2">
+        <div class="prose">
+          <p>
+            El ambiente del MDP es un simulador. La aceleración angular es la variable crítica, pues determina si el
+            péndulo cae. Incluye la gravedad ($g\sin\theta$), la fuerza de control y el término centrífugo
+            ($\dot\theta^2$):
+          </p>
+          <div class="math-block">$$\ddot\theta=\frac{g\sin\theta-\cos\theta\left[\dfrac{F+mL\dot\theta^{2}\sin\theta}{M+m}\right]}{L\left(\dfrac{4}{3}-\dfrac{m\cos^{2}\theta}{M+m}\right)}$$</div>
+          <p>La aceleración del carro está acoplada a $\ddot\theta$, así que se calcula justo después:</p>
+          <div class="math-block">$$\ddot x=\frac{F+mL\left(\dot\theta^{2}\sin\theta-\ddot\theta\cos\theta\right)}{M+m}$$</div>
+          <p>
+            Ambas son <strong>no lineales y acopladas</strong>; por eso se usa aprendizaje reforzado en lugar de
+            derivar un controlador a mano.
+          </p>
+        </div>
+        <div class="stack">
+          <div class="card">
+            <h3>Parámetros físicos</h3>
+            <table class="table">
+              <tbody>
+                <tr><td>$M$</td><td>Masa del carro</td><td class="num">1.0 kg</td></tr>
+                <tr><td>$m$</td><td>Masa del péndulo</td><td class="num">0.1 kg</td></tr>
+                <tr><td>$L$</td><td>Mitad de la longitud de la barra</td><td class="num">0.5 m</td></tr>
+                <tr><td>$g$</td><td>Gravedad</td><td class="num">9.8 m/s²</td></tr>
+                <tr><td>$\Delta T$</td><td>Paso de simulación</td><td class="num">0.02 s</td></tr>
+                <tr><td>$\theta_{\max}$</td><td>Ángulo de caída</td><td class="num">±12°</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="card">
+            <h3>Integración de Euler</h3>
+            <p class="muted small">Se integran primero las velocidades y con ellas las posiciones, generando $S_{t+1}$:</p>
+            <div class="math-grid">
+              <div>$$\dot\theta_{t+1}=\dot\theta_t+\ddot\theta_t\,\Delta T$$</div>
+              <div>$$\theta_{t+1}=\theta_t+\dot\theta_{t+1}\,\Delta T$$</div>
+              <div>$$\dot x_{t+1}=\dot x_t+\ddot x_t\,\Delta T$$</div>
+              <div>$$x_{t+1}=x_t+\dot x_{t+1}\,\Delta T$$</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== PASO 3 ===================== -->
+    <section id="mdp" class="step">
+      <div class="step-head"><span class="step-num">03</span><h2>Formulación como problema de RL</h2></div>
+      <div class="grid-3">
+        <div class="card feature">
+          <div class="feature-icon">s</div>
+          <h3>Estado</h3>
+          <p>$\mathbf{s}_t=[\theta,\ \dot\theta]^T\in\mathbb{R}^2$, continuo. Antes de entrar a la red se normaliza:
+            $\theta/12^\circ$ y $\dot\theta/2$, para que ambas entradas vivan en $\approx[-1,1]$.</p>
+        </div>
+        <div class="card feature">
+          <div class="feature-icon">a</div>
+          <h3>Acciones</h3>
+          <p>41 fuerzas discretas: $F\in\{-10,-9.5,\dots,+9.5,+10\}$ N. La red superficial del Ejercicio 1 sólo
+            tiene $\{-10,0,+10\}$ N.</p>
+          <div id="action-strip" class="action-strip" aria-hidden="true"></div>
+        </div>
+        <div class="card feature">
+          <div class="feature-icon">r</div>
+          <h3>Recompensa</h3>
+          <p>$r=+1$ en la vertical y $r=-10$ al caer ($|\theta|>12^\circ$). El +1 decae con la inclinación y con
+            el esfuerzo, para premiar $\theta\approx0$ con fuerzas suaves:</p>
+          <div class="math-block small">$$r_t=\begin{cases}1-\left(\dfrac{\theta_t}{12^\circ}\right)^2-0.1\left(\dfrac{F_t}{10}\right)^2 & |\theta_t|\le 12^\circ\\ -10 & \text{caída}\end{cases}$$</div>
+        </div>
+      </div>
+      <div class="callout">
+        <b>¿Por qué estos dos términos?</b> Los agregamos después de entrenar con la recompensa literal:
+        <ul class="callout-list">
+          <li><b>Con $+1$ binario</b> el agente encontró un "truco": sobrevivir los 300 pasos <em>inclinado ~11°</em>,
+            acelerando el carro sin parar (inclinado y acelerando, el péndulo también está en equilibrio). Cumple la
+            recompensa, pero no el objetivo $\theta\approx0$. El término $\theta^2$ lo corrige.</li>
+          <li><b>Sin costo de esfuerzo</b> la red profunda centraba el péndulo, pero alternaba entre $+9.5$ y $-5.5$ N
+            en cada paso (como en la diapositiva 28) y la red superficial lograba lo mismo. Nada premiaba usar las 41
+            acciones. Con $-0.1\,(F/10)^2$ las fuerzas suaves valen más y la granularidad se vuelve útil.</li>
+        </ul>
+        La recompensa máxima sigue siendo $+1$ por paso, o sea 300 por episodio, como en las curvas del curso.
+      </div>
+      <p class="prose">
+        Un episodio termina cuando el péndulo cae o al llegar a <strong>300 pasos</strong> (6 s). El ángulo inicial es
+        aleatorio, $\theta_0\sim\mathcal U(-10^\circ,10^\circ)$, y $\dot\theta_0\sim\mathcal U(-0.05,0.05)$ rad/s.
+      </p>
+    </section>
+
+    <!-- ===================== PASO 4 ===================== -->
+    <section id="tabla" class="step">
+      <div class="step-head"><span class="step-num">04</span><h2>¿Por qué no una Tabla Q?</h2></div>
+      <div class="grid-2">
+        <div class="prose">
+          <p>
+            Q-Learning clásico guarda $Q(s,a)$ en una matriz de tamaño $|\mathbb S|\times|\mathbb A|$. Con estados
+            continuos habría que discretizar: con 1° de precisión en $\theta$ (360 valores), 100 valores de
+            $\dot\theta$ y 41 acciones:
+          </p>
+          <div class="math-block">$$360\times100\times41 = 1{,}476{,}000\ \text{celdas}$$</div>
+          <p>
+            Y casi ninguna se visitaría. Si se aumenta la precisión a 0.1°, el número de celdas se multiplica por
+            10. Además, la tabla no generaliza: aprender $Q$ en $\theta=1^\circ$ no dice nada sobre
+            $\theta=1.001^\circ$.
+          </p>
+        </div>
+        <div class="card compare">
+          <div class="compare-col">
+            <h3>Tabla Q</h3>
+            <p class="big num">1,476,000</p>
+            <p class="muted">celdas independientes, sin generalización</p>
+          </div>
+          <div class="compare-vs">vs</div>
+          <div class="compare-col accent">
+            <h3>Red Q</h3>
+            <p class="big num" id="param-count">7,017</p>
+            <p class="muted">pesos que generalizan a estados nunca vistos: $Q(s,a)\approx Q(s,a;\mathbf w)$</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== PASO 5 ===================== -->
+    <section id="red" class="step">
+      <div class="step-head"><span class="step-num">05</span><h2>La red Q profunda</h2></div>
+      <div class="grid-2">
+        <div class="prose">
+          <p>
+            La red recibe el estado y devuelve <strong>un valor Q por cada acción</strong> en una sola pasada hacia
+            adelante. Elegir la acción es tomar el máximo: $a^*=\arg\max_a Q(s,a;\mathbf w)$.
+          </p>
+          <table class="table">
+            <thead><tr><th>Capa</th><th>Tamaño</th><th>Función</th></tr></thead>
+            <tbody>
+              <tr><td>Entrada</td><td class="num">2</td><td>$\theta,\ \dot\theta$ normalizados</td></tr>
+              <tr><td>Oculta 1</td><td class="num">64 · ReLU</td><td>Generaliza entre estados</td></tr>
+              <tr><td>Oculta 2</td><td class="num">64 · ReLU</td><td>Capacidad para el control fino</td></tr>
+              <tr><td>Salida</td><td class="num">41 · lineal</td><td>$Q(s,a_1),\dots,Q(s,a_{41})$</td></tr>
+            </tbody>
+          </table>
+          <div class="math-block small">$$\mathbf h_1=\mathrm{ReLU}(\mathbf s W_1+\mathbf b_1),\quad \mathbf h_2=\mathrm{ReLU}(\mathbf h_1W_2+\mathbf b_2),\quad Q=\mathbf h_2W_3+\mathbf b_3$$</div>
+          <p class="muted small">
+            Pesos iniciales con inicialización He ($\mathcal N(0,\,2/n_{in})$). En total
+            $2\cdot64+64 + 64\cdot64+64 + 64\cdot41+41 = 7{,}017$ parámetros.
+          </p>
+        </div>
+        <div class="card">
+          <div class="card-row"><h3>Activaciones en vivo</h3><span class="muted small">el diagrama sigue al agente de la demo</span></div>
+          <canvas id="net-canvas" class="net-canvas"></canvas>
+          <p class="muted small legend-line"><span class="sw pos"></span> peso positivo <span class="sw neg"></span> peso negativo <span class="sw acc"></span> acción elegida</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== PASO 6 ===================== -->
+    <section id="algoritmo" class="step">
+      <div class="step-head"><span class="step-num">06</span><h2>El algoritmo DQN paso a paso</h2></div>
+      <div class="timeline">
+        <div class="tl-item">
+          <span class="tl-dot">1</span>
+          <div><h3>Observar y actuar (ε-greedy)</h3>
+            <p>Con probabilidad $\varepsilon$ se elige una acción aleatoria (exploración); si no, $a=\arg\max_a Q(s,a;\mathbf w)$.
+              $\varepsilon$ empieza en 1 y se multiplica por 0.996 cada episodio hasta 0.01.</p></div>
+        </div>
+        <div class="tl-item">
+          <span class="tl-dot">2</span>
+          <div><h3>Simular el ambiente</h3>
+            <p>Se aplica la fuerza $F=a$, se integran las ecuaciones con Euler y se obtiene $(s', r, \text{cayó})$.</p></div>
+        </div>
+        <div class="tl-item">
+          <span class="tl-dot">3</span>
+          <div><h3>Guardar en la memoria de repetición</h3>
+            <p>La transición $(s,a,r,s',d)$ entra a un búfer de 50,000 experiencias. Muestrear al azar rompe la
+              correlación entre pasos consecutivos.</p></div>
+        </div>
+        <div class="tl-item">
+          <span class="tl-dot">4</span>
+          <div><h3>Calcular el Target Q (Bellman)</h3>
+            <p>Con un minilote de 64 transiciones y una <strong>red objetivo</strong> $\mathbf w^-$ (copia congelada que se
+              sincroniza cada 500 pasos):</p>
+            <div class="math-block">$$y=\underbrace{r}_{\text{recompensa real}}+\underbrace{\gamma\,(1-d)\max_{a'}Q(s',a';\mathbf w^-)}_{\text{estimación del mejor futuro}}$$</div></div>
+        </div>
+        <div class="tl-item">
+          <span class="tl-dot">5</span>
+          <div><h3>Minimizar la pérdida</h3>
+            <div class="math-block">$$\mathcal L(\mathbf w)=\mathbb E\left[\left(y-Q(s,a;\mathbf w)\right)^2\right]$$</div>
+            <p>Sólo la salida de la acción tomada recibe gradiente: $\partial\mathcal L/\partial Q(s,a)=2\,(Q-y)/N$.</p></div>
+        </div>
+        <div class="tl-item">
+          <span class="tl-dot">6</span>
+          <div><h3>Retropropagación + Adam</h3>
+            <p>El gradiente viaja hacia atrás por las capas (la derivada de ReLU deja pasar sólo las neuronas activas) y Adam
+              ajusta los pesos con $\alpha=0.0005$, recortando la norma del gradiente a 10.</p></div>
+        </div>
+      </div>
+      <details class="card code-card">
+        <summary>Ver el núcleo del aprendizaje (Python / NumPy)</summary>
+<pre><code>def learn(self):
+    s, a, r, s2, d = self.memory.sample(self.cfg.batch)
+    s, s2 = s * INPUT_SCALE, s2 * INPUT_SCALE
+    # Target Q = r + γ · max_a' Q(s', a'; w⁻)   (sin bootstrap si cayó)
+    q_next = self.q_target.forward(s2).max(axis=1)
+    target = r + self.cfg.gamma * q_next * (1.0 - d)
+    q_all, acts = self.q.forward(s, keep=True)
+    rows = np.arange(len(a))
+    td = q_all[rows, a] - target
+    # Loss(w) = E[(Target Q − Q(s,a;w))²]  ->  dL/dQ(s,a) = 2·(Q − Target)/N
+    grad = np.zeros_like(q_all)
+    grad[rows, a] = 2.0 * td / len(a)
+    gW, gb = self.q.backward(acts, grad)
+    self.opt.step(gW, gb)</code></pre>
+      </details>
+    </section>
+
+    <!-- ===================== PASO 7 ===================== -->
+    <section id="hiper" class="step">
+      <div class="step-head"><span class="step-num">07</span><h2>Hiperparámetros</h2></div>
+      <div class="card table-wrap">
+        <table class="table">
+          <thead><tr><th>Parámetro</th><th class="num">Ejercicio 1 · superficial</th><th class="num">Ejercicio 2 · profunda</th></tr></thead>
+          <tbody>
+            <tr><td>Arquitectura</td><td class="num">2 → 24 → 3</td><td class="num">2 → 64 → 64 → 41</td></tr>
+            <tr><td>Acciones</td><td class="num">{−10, 0, +10} N</td><td class="num">−10 … +10 N (paso 0.5)</td></tr>
+            <tr><td>Tasa de aprendizaje α</td><td class="num">0.001</td><td class="num">0.0005</td></tr>
+            <tr><td>Episodios</td><td class="num">500</td><td class="num">2,000</td></tr>
+            <tr><td>Factor de descuento γ</td><td class="num">0.99</td><td class="num">0.99</td></tr>
+            <tr><td>Decaimiento de ε por episodio</td><td class="num">0.99</td><td class="num">0.996</td></tr>
+            <tr><td>Minilote · memoria</td><td class="num">64 · 50,000</td><td class="num">64 · 50,000</td></tr>
+            <tr><td>Sincronizar red objetivo</td><td class="num">cada 500 pasos</td><td class="num">cada 500 pasos</td></tr>
+            <tr><td>Recompensa por paso</td><td class="num">1 − (θ/12°)² − 0.1·(F/10)²</td><td class="num">1 − (θ/12°)² − 0.1·(F/10)²</td></tr>
+            <tr><td>Pasos máximos por episodio</td><td class="num">300</td><td class="num">300</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ===================== PASO 8 ===================== -->
+    <section id="resultados" class="step">
+      <div class="step-head"><span class="step-num">08</span><h2>Resultados</h2></div>
+      <div class="kpis" id="kpis"></div>
+
+      <div class="card chart-card">
+        <div class="card-row">
+          <h3>Curva de aprendizaje · DQN profundo</h3>
+          <div class="legend" id="legend-deep"></div>
+        </div>
+        <div class="chart-box tall"><canvas id="chart-deep"></canvas></div>
+        <p class="muted small" id="deep-analysis"></p>
+      </div>
+
+      <div class="grid-2">
+        <div class="card chart-card">
+          <div class="card-row"><h3>Superficial vs profunda</h3></div>
+          <div class="chart-box"><canvas id="chart-compare"></canvas></div>
+          <p class="muted small" id="compare-analysis">Recompensa promedio (ventana de 20 episodios).</p>
+        </div>
+        <div class="card chart-card">
+          <div class="card-row"><h3>Exploración y pérdida</h3></div>
+          <div class="chart-box"><canvas id="chart-eps"></canvas></div>
+          <p class="muted small">Al bajar $\varepsilon$ el agente explota lo aprendido; la pérdida TD mide qué tanto obedece la red a la ecuación de Bellman.</p>
+        </div>
+      </div>
+
+      <div class="card chart-card">
+        <div class="card-row">
+          <h3>Política greedy desde θ₀ = 10° (5 s)</h3>
+          <div class="seg" role="tablist" id="resp-toggle">
+            <button class="on" data-model="deep">Profunda · 41 acciones</button>
+            <button data-model="shallow">Superficial · 3 acciones</button>
+          </div>
+        </div>
+        <div class="grid-2 tight">
+          <div><p class="chart-title">Ángulo θ (grados)</p><div class="chart-box"><canvas id="chart-theta"></canvas></div></div>
+          <div><p class="chart-title">Fuerza aplicada F (N)</p><div class="chart-box"><canvas id="chart-force"></canvas></div></div>
+        </div>
+        <p class="muted small" id="resp-analysis"></p>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <h3>Diagnóstico: superficial vs profunda</h3>
+          <div class="table-wrap">
+            <table class="table" id="diag-table"></table>
+          </div>
+          <p class="muted small">Medido sobre la respuesta greedy de 5 s desde θ₀ = 10°; "régimen" son los últimos 3 s.
+            Ambas redes equilibran el péndulo: la diferencia está en la <b>precisión</b> y en cómo usan la fuerza.</p>
+        </div>
+        <div class="card">
+          <h3>Mapa de la política aprendida</h3>
+          <div class="policy-wrap">
+            <canvas id="policy-canvas" class="policy-canvas"></canvas>
+            <div class="policy-legend"><span>−10 N</span><i></i><span>+10 N</span></div>
+          </div>
+          <p class="muted small">Fuerza elegida para cada $(\theta,\dot\theta)$. La frontera diagonal es la "ley de control" que descubrió la red.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== PASO 9 ===================== -->
+    <section id="demo" class="step">
+      <div class="step-head"><span class="step-num">09</span><h2>Demostración interactiva</h2></div>
+      <div class="demo">
+        <div class="card demo-main">
+          <canvas id="demo-canvas" class="demo-canvas"></canvas>
+          <div class="overlay" id="demo-overlay" hidden><b>¡Cayó!</b><span>reiniciando…</span></div>
+          <div class="demo-hud">
+            <div><span>θ</span><b id="d-theta">0.0°</b></div>
+            <div><span>θ̇</span><b id="d-omega">0.00</b></div>
+            <div><span>F</span><b id="d-force">0.0 N</b></div>
+            <div><span>x</span><b id="d-x">0.00 m</b></div>
+            <div><span>tiempo</span><b id="d-time">0.0 s</b></div>
+            <div><span>récord</span><b id="d-best">0.0 s</b></div>
+          </div>
+        </div>
+        <aside class="card demo-side">
+          <label class="field">
+            <span>Controlador</span>
+            <select id="ctrl-select">
+              <option value="deep">Red profunda (41 acciones)</option>
+              <option value="shallow">Red superficial (3 acciones)</option>
+              <option value="browser" disabled>Mi red entrenada en el navegador</option>
+              <option value="manual">Manual: teclas ← →</option>
+              <option value="none">Sin control</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Ángulo inicial <b id="theta0-val">10°</b></span>
+            <input type="range" id="theta0" min="-11" max="11" step="0.5" value="10" />
+          </label>
+          <label class="field">
+            <span>Velocidad <b id="speed-val">1×</b></span>
+            <input type="range" id="speed" min="0.25" max="3" step="0.25" value="1" />
+          </label>
+          <div class="btn-row">
+            <button class="btn small" id="push-left">← Empujar</button>
+            <button class="btn small" id="push-right">Empujar →</button>
+          </div>
+          <div class="btn-row">
+            <button class="btn small primary" id="reset">Reiniciar</button>
+            <button class="btn small ghost" id="pause">Pausa</button>
+          </div>
+          <label class="toggle"><input type="checkbox" id="auto-push" /> <span>Perturbaciones aleatorias</span></label>
+          <p class="muted small">Tip: también puedes hacer clic sobre la simulación para empujar el péndulo hacia ese lado.</p>
+        </aside>
+      </div>
+      <div class="grid-3 demo-panels">
+        <div class="card"><p class="chart-title">Valores Q(s, a) en este instante</p><canvas id="q-canvas" class="mini"></canvas></div>
+        <div class="card"><p class="chart-title">θ(t) · últimos 6 s</p><canvas id="theta-trace" class="mini"></canvas></div>
+        <div class="card"><p class="chart-title">F(t) · últimos 6 s</p><canvas id="force-trace" class="mini"></canvas></div>
+      </div>
+    </section>
+
+    <!-- ===================== PASO 10 ===================== -->
+    <section id="entrena" class="step">
+      <div class="step-head"><span class="step-num">10</span><h2>Entrena tu propia red en el navegador</h2></div>
+      <p class="prose">
+        Mismo algoritmo, reescrito en JavaScript y ejecutado en un Web Worker: la red se entrena en tu
+        computadora sin bloquear la página. Cada 10 episodios el agente de la derecha se actualiza con los pesos
+        actuales, así que puedes ver cómo aprende.
+      </p>
+      <div class="train">
+        <div class="card train-controls">
+          <label class="field"><span>Red</span>
+            <select id="t-arch">
+              <option value="deep">Profunda 2 → 64 → 64 → 41</option>
+              <option value="shallow">Superficial 2 → 24 → 3</option>
+            </select>
+          </label>
+          <label class="field"><span>Episodios <b id="t-ep-val">600</b></span>
+            <input type="range" id="t-episodes" min="100" max="2000" step="100" value="600" />
+          </label>
+          <label class="field"><span>Tasa de aprendizaje α</span>
+            <select id="t-lr">
+              <option value="0.0001">0.0001</option>
+              <option value="0.0005" selected>0.0005</option>
+              <option value="0.001">0.001</option>
+              <option value="0.005">0.005</option>
+            </select>
+          </label>
+          <label class="field"><span>Semilla</span><input type="number" id="t-seed" value="7" min="0" max="99999" /></label>
+          <div class="btn-row">
+            <button class="btn small primary" id="t-start">Entrenar</button>
+            <button class="btn small ghost" id="t-pause" disabled>Pausa</button>
+          </div>
+          <button class="btn small ghost wide" id="t-use" disabled>Usar en la demo</button>
+          <div class="progress"><i id="t-bar"></i></div>
+          <p class="muted small" id="t-status">Listo para entrenar.</p>
+        </div>
+        <div class="card train-chart">
+          <div class="chart-box tall"><canvas id="chart-live"></canvas></div>
+        </div>
+        <div class="card train-preview">
+          <canvas id="preview-canvas" class="preview-canvas"></canvas>
+          <p class="muted small" id="preview-label">El agente aparecerá aquí al empezar.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== CONCLUSIONES ===================== -->
+    <section id="conclusiones" class="step">
+      <div class="step-head"><span class="step-num">11</span><h2>Conclusiones</h2></div>
+      <div class="grid-3">
+        <div class="card"><h3>Granularidad (A)</h3><p>Con 41 acciones la red profunda modula la fuerza y mantiene el péndulo varias veces más cerca de 0° que la superficial, que sólo puede corregir con golpes de ±10 N. Ese es el "control fino" que pedía el Ejercicio 2.</p></div>
+        <div class="card"><h3>Capacidad (w)</h3><p>La red profunda tiene que distinguir 41 valores Q casi iguales entre sí, y para eso necesita las dos capas de 64 neuronas. El costo es tiempo: tarda más episodios en converger, porque explora 41 acciones en lugar de 3.</p></div>
+        <div class="card"><h3>Diseño de la recompensa</h3><p>El agente optimiza exactamente lo que se le pide. Con $+1$ binario aprendió a sobrevivir inclinado; sin costo de esfuerzo no tenía motivo para usar fuerzas suaves. La recompensa tiene que describir el objetivo de control completo.</p></div>
+      </div>
+      <div class="card repo">
+        <div>
+          <h3>Código fuente</h3>
+          <p class="muted">Entrenador en NumPy (<code>training/dqn_pendulo.py</code>), versión en JavaScript (<code>web/js</code>) y el despliegue automático con GitHub Actions.</p>
+        </div>
+        <a class="btn primary" href="https://github.com/sebastiux/qdeeplearningpendulo" target="_blank" rel="noopener">Ver en GitHub</a>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <p>Deep Q-Learning · Péndulo invertido — basado en <em>Aprendizaje reforzado: Deep Q-learning</em>, Universidad Iberoamericana.</p>
+  </footer>
+</body>
+</html>
